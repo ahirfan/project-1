@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCOUNT_ID = 'your_aws_account_id'
+        AWS_REGION = 'your_aws_region'
+        ECR_REPO_NAME = 'your_ecr_repo_name'
+        DOCKER_IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/yourrepo.git'
+            }
+        }
+        stage('Build') {
+            steps {
+                sh 'docker build -t myapp:${env.BUILD_ID} .'
+            }
+        }
+        stage('Unit Test') {
+            steps {
+                // Include your unit test steps here
+                sh 'echo "Running Unit Tests"'
+            }
+        }
+        stage('Push to ECR') {
+            steps {
+                script {
+                    sh 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com'
+                    sh 'docker tag myapp:${env.BUILD_ID} ${DOCKER_IMAGE}:${env.BUILD_ID}'
+                    sh 'docker push ${DOCKER_IMAGE}:${env.BUILD_ID}'
+                }
+            }
+        }
+        stage('Deploy to EC2') {
+            steps {
+                sshagent (credentials: ['your-ec2-key']) {
+                    sh '''
+                    ssh -o StrictHostKeyChecking=no ec2-user@your_ec2_instance <<EOF
+                    docker pull ${DOCKER_IMAGE}:${env.BUILD_ID}
+                    docker run -d -p 80:80 ${DOCKER_IMAGE}:${env.BUILD_ID}
+                    EOF
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        success {
+            emailext to: 'you@example.com',
+            subject: "SUCCESS: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+            body: "The build ${env.BUILD_NUMBER} was successful!"
+        }
+        failure {
+            emailext to: 'you@example.com',
+            subject: "FAILURE: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+            body: "The build ${env.BUILD_NUMBER} failed."
+        }
+    }
+}
